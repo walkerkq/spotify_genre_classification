@@ -1,0 +1,256 @@
+Spotify Audio Features + Music Genres
+================
+
+Classifying songs into major music genres Understanding the how
+Spotify’s audio features map onto major music genres
+
+Spotify provies 12 [audio
+features](https://developer.spotify.com/documentation/web-api/reference/object-model/#audio-features-object)
+for each track (paraphrased below):
+
+  - **acousticness**: confidence measure of whether or not the track is
+    acoustic (0.0-1.0)  
+  - **danceability**: how suitable a track is for dancing, based on a
+    combination of elements like tempo, beat strength, and overall
+    regularity (0.0-1.0)  
+  - **duration\_ms**: the duration of the track in milliseconds.  
+  - **energy**: a perceptual measure of intensity and activity, based on
+    features like dynamic range, perceived loudness, timbre and onset
+    rate (0.0-1.0)  
+  - **instrumentalness**: confidence measure of whether or not a track
+    is instrumental (no vocals) or not (0.0-1.0)  
+  - **key**: the key of the track, integers mapping to pitches  
+  - **liveness**: confidence measure of whether or not the track was
+    recorded live/contains audience noises (0.0-1.0)  
+  - **loudness**: overall loudness of a track in decibels (typical range
+    -60 to 0 db)  
+  - **mode**: major (1) or minor (0) modality of the track  
+  - **speechiness**: detects the presence of spoken words, where 0-0.33
+    is most likely music without speech, 0.33-0.66 contain both music
+    and speech, and 0.66-1.0 are most likely speech without music
+    (0.0-1.0)  
+  - **tempo**: the estimated speed or pace of the track in beats per
+    minute (bpm)  
+  - **valence**: describes the positiveness conveyed by a track
+    (0.0-1.0)
+
+<!-- end list -->
+
+``` r
+feature_names <- names(playlist_songs)[11:22]
+
+playlist_songs %>%
+  select(c('playlist_genre', feature_names)) %>%
+  pivot_longer(cols = feature_names) %>%
+  ggplot(aes(x = value)) +
+  geom_density(aes(color = playlist_genre), alpha = 0.5) +
+  facet_wrap(~name, ncol = 3, scales = 'free') +
+  labs(title = 'Spotify Audio Feature Density - by Genre',
+       x = '', y = 'density') +
+  theme_kp() +
+  scale_color_kp(palette = 'mixed')
+```
+
+![](spotify_genres_files/figure-gfm/inspect-1.png)<!-- -->
+
+Overall, the songs in the dataset tend to have low acousticness,
+liveness, instrumentalness and speechiness, with higher danceability,
+energy, loudness, and tempos. Valence is evenly distributed.
+
+Breaking things out by genre, dance tracks are most likely to not be
+acoustic and to have high energy, while rap and hiphop tend to score
+highest for danceability. Based on the density plot, it looks like
+energy and danceability may provide the most separation between genres
+during classification, while instrumentalness and key may not help much.
+
+How do these features correlate with one another? Are there any that are
+redundant?
+
+``` r
+playlist_songs %>%
+  select(feature_names) %>%
+  scale() %>%
+  cor() %>%
+  corrplot::corrplot(method = 'color', 
+                     order = 'hclust', 
+                     type = 'upper', 
+                     diag = FALSE, 
+                     tl.col = 'black',
+                     addCoef.col = "grey30",
+                     number.cex = 0.5,
+                     col = colorRampPalette(colors = c(kp_cols('red'), 'white', kp_cols('dark_blue')))(200),
+                     main = '\nAudio Feature Correlation',
+                     family = 'Avenir')
+```
+
+![](spotify_genres_files/figure-gfm/explore_features-1.png)<!-- -->
+
+Energy and loudness appear to be collinear (as they have a correlation
+of 0.73). Let’s remove loudness, since energy appears to give more
+distinction between genre groups (as seen in the density plot).
+
+``` r
+# remove loudness
+feature_names <- names(playlist_songs)[c(11:13,15:22)]
+```
+
+Key doesn’t appear to have associations, positive or negative, with any
+of the other features aside from mode.
+
+How do the genres correlate with each other? How consistent are songs
+within a given genre?
+
+``` r
+# create a key dataframe with ids/genres with numerical index
+key <- playlist_songs %>%
+  select(track.id, playlist_genre) %>%
+  mutate(position = 1:n())
+
+# create a correlation matrix, then melt it
+song_cor <- playlist_songs %>% 
+  select(feature_names) %>%
+  scale(center = TRUE) %>%
+  t() %>%
+  cor() %>%
+  reshape2::melt() %>%
+  filter(!is.na(value) & Var1 != Var2) %>%
+  left_join(key, by = c('Var1' = 'position')) %>%
+  left_join(key, by = c('Var2' = 'position')) 
+
+# summarise by genres
+genre_cor <- song_cor %>%
+  group_by(playlist_genre.x, playlist_genre.y) %>%
+  summarise(avg_cor = mean(value)) %>%
+  ungroup() 
+
+genre_cor_matrix <- genre_cor %>%
+  reshape2::dcast(playlist_genre.x ~ playlist_genre.y, value.var = 'avg_cor') 
+
+row.names(genre_cor_matrix) <- genre_cor_matrix$playlist_genre.x
+
+genre_cor_matrix %>%
+  select(-playlist_genre.x) %>%
+  as.matrix() %>%
+  corrplot::corrplot(method = 'color', 
+                     order = 'hclust',
+                     type = 'upper',
+                     tl.col = 'black',
+                     addCoef.col = "grey40",
+                     number.cex = 0.75,
+                     col = colorRampPalette(colors = c(kp_cols('red'), 'white', kp_cols('dark_blue')))(200),
+                     main = '\nAverage Correlation Between Genre Songs',
+                     family = 'Avenir'
+                     )
+```
+
+![](spotify_genres_files/figure-gfm/cor-1.png)<!-- -->
+
+Songs within each genre vary quite a bit\! Country songs are the most
+consistent, with a correlation strength of 0.17, while pop songs are the
+least consistent at just 0.03.
+
+Rap and hiphop (0.11) and country and rock (0.10) have the strongest
+correlation across genres. They also have the strongest negative
+association with one another (-0.12 - -0.11). Dance and pop have very
+little positive or negative associations across genres, which may make
+them hard to classify.
+
+### Preparing the data for training
+
+``` r
+# split into testing and training
+set.seed(1234)
+training_songs <- sample(1:nrow(playlist_songs), nrow(playlist_songs)*.80, replace = FALSE)
+train_set <- playlist_songs[training_songs, c('playlist_genre', feature_names)] 
+test_set <- playlist_songs[-training_songs, c('playlist_genre', feature_names)] 
+
+train_resp <- playlist_songs[training_songs, 'playlist_genre']
+test_resp <- playlist_songs[-training_songs, 'playlist_genre']
+```
+
+### K Nearest Neighbors
+
+``` r
+# run k nearest neighbors 
+kresult <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = 1)
+
+# check
+compare_knn <- data.frame(true_value = test_resp,
+                              predicted_value = kresult,
+                              stringsAsFactors = FALSE) %>%
+  count(true_value, predicted_value) %>%
+  mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE))
+
+accuracy_knn <- compare_knn %>%
+  group_by(match) %>%
+  summarise(n = sum(n)) %>%
+  ungroup() %>%
+  mutate(percent = n/sum(n),
+         model = 'knn') %>%
+  filter(match == TRUE)
+
+# visualize
+compare_knn %>%
+  ggplot(aes(x = true_value, y = n)) +
+  geom_col(aes(fill = match), position = 'dodge') +
+  facet_wrap(~predicted_value, ncol = 3) +
+  coord_flip() + 
+  labs(title = 'Genre classification accuracy, KNN') +
+  theme_kp() +
+  scale_fill_kp()
+```
+
+![](spotify_genres_files/figure-gfm/knn-1.png)<!-- -->
+
+### Random Forest
+
+``` r
+rfresult <- randomForest(as.factor(playlist_genre) ~ ., ntree = 100, data = train_set)
+
+varImpPlot(rfresult, sort = TRUE, n.var = 11)
+```
+
+![](spotify_genres_files/figure-gfm/random_forest-1.png)<!-- -->
+
+``` r
+predict_rf <- predict(rfresult, test_set)
+
+compare_rf <- test_set %>%
+  cbind(predict_rf) %>%
+  count(playlist_genre, predict_rf) %>%
+  mutate(match = ifelse(playlist_genre == predict_rf, TRUE, FALSE))
+
+accuracy_rf <- compare_rf %>%
+  group_by(match) %>%
+  summarise(n = sum(n)) %>%
+  ungroup() %>%
+  mutate(percent = n/sum(n),
+         model = 'random forest') %>%
+  filter(match == TRUE)
+
+compare_rf %>%
+  ggplot(aes(x = playlist_genre, y = n)) +
+  geom_col(aes(fill = match), position = 'dodge') +
+  facet_wrap(~predict_rf, ncol = 3) +
+  coord_flip() + 
+  labs(title = 'Genre classification accuracy, Random Forest') +
+  theme_kp() +
+  scale_fill_kp()
+```
+
+![](spotify_genres_files/figure-gfm/random_forest-2.png)<!-- -->
+
+### Model Comparison
+
+``` r
+accuracy_knn %>%
+  rbind(accuracy_rf) %>%
+  mutate(accuracy = percent(percent,2)) %>%
+  select(model, accuracy) %>%
+  knitr::kable()
+```
+
+| model         | accuracy |
+| :------------ | -------: |
+| knn           |   34.87% |
+| random forest |   57.61% |
