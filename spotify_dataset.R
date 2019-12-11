@@ -30,16 +30,27 @@ access_token <- get_spotify_access_token(client_id = Sys.getenv('SPOTIFY_CLIENT_
                                          client_secret = Sys.getenv('SPOTIFY_CLIENT_SECRET'))
 
 # Get a list of genre-specific playlists
-genres <- c('pop', 'country', 'rap', 'hiphop', 'rock', 'dance')
+genres <- c('pop', 'r&b', 'rap', 'latin', 'rock', 'edm')
+### every noise
+# http://everynoise.com/everynoise1d.cgi?root=edm
+subgenres <- data.frame(genre = c(rep('pop',4), rep('rap',4), rep('rock',4), rep('latin',4), rep('r&b',4), rep('edm',4)),
+                      subgenre = c('dance pop', 'post-teen pop', 'electropop', 'indie poptimism', 
+                                    'hip hop', 'southern hip hop', 'gangster rap', 'trap', 
+                                    'album rock', 'classic rock', 'permanent wave', 'hard rock',
+                                    'tropical', 'latin pop', 'reggaeton', 'latin hip hop', 
+                                    'urban contemporary', 'hip pop', 'new jack swing', 'neo soul',
+                                    'electro house', 'big room', 'pop edm', 'progressive electro house'),
+                      stringsAsFactors = FALSE)
 
 playlist_ids <- NULL
 
-for(g in genres){
+for(g in seq_along(subgenres$subgenre)){
   
-  out <- search_spotify(q = g, type = 'playlist')
+  out <- search_spotify(q = subgenres$subgenre[g], type = 'playlist', market = 'US', limit = 20)
   out <- out %>% 
     select(name, id) %>%
-    mutate(genre = g)
+    mutate(subgenre = subgenres$subgenre[g],
+           genre = subgenres$genre[g])
   
   playlist_ids <- rbind(playlist_ids, out)
   
@@ -64,7 +75,8 @@ for(p in seq_along(playlist_ids$id)){
     select(track.id, track.name, track.artist, track.popularity, track.album.id, track.album.name, track.album.release_date) %>%
     mutate(playlist_name = playlist_ids$name[p],
            playlist_id = playlist_ids$id[p],
-           playlist_genre = playlist_ids$genre[p]) 
+           playlist_genre = playlist_ids$genre[p],
+           playlist_subgenre = playlist_ids$subgenre[p]) 
   
   playlist_songs <- rbind(playlist_songs, out)
   
@@ -76,6 +88,15 @@ playlist_audio <- get_track_audio_features_over_100(ids = playlist_songs$track.i
 # combine
 playlist_songs <- playlist_songs %>%
   left_join(select(playlist_audio, -track_href, -uri, -analysis_url, -type, -time_signature), by = c('track.id' = 'id')) %>%
-  unique()
+  unique() %>%
+  filter(!is.na(danceability))
+
+# handle duplicates - songs on multiple playlists
+playlist_songs <- playlist_songs %>% 
+  group_by(playlist_genre, playlist_subgenre, track.id) %>%
+  mutate(row_number = 1:n()) %>%
+  filter(row_number == 1) %>%
+  ungroup() %>%
+  select(-row_number)
 
 #write.csv(playlist_songs, 'genre_songs.csv', row.names=FALSE)
