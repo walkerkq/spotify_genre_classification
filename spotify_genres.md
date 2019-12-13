@@ -15,9 +15,10 @@ and descriptors like `duration`, `tempo`, `key`, and `mode`.
 library(tidyverse)
 library(randomForest)
 library(formattable)
+library(neuralnet)
 source('../kp_themes/theme_kp.R')
 
-knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6)
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, warning = FALSE, error = FALSE, message = FALSE)
 ```
 
 ``` r
@@ -128,11 +129,7 @@ genre_cor_matrix <- genre_cor %>%
               values_from = 'avg_cor')
 
 row.names(genre_cor_matrix) <- genre_cor_matrix$playlist_genre.x
-```
 
-    ## Warning: Setting row names on a tibble is deprecated.
-
-``` r
 genre_cor_matrix %>%
   select(-playlist_genre.x) %>%
   as.matrix() %>%
@@ -163,13 +160,34 @@ to classify.
 ### Preparing the data for training
 
 ``` r
-set.seed(1234)
-training_songs <- sample(1:nrow(playlist_songs), nrow(playlist_songs)*.80, replace = FALSE)
-train_set <- playlist_songs[training_songs, c('playlist_genre', feature_names_reduced)] 
-test_set <- playlist_songs[-training_songs, c('playlist_genre', feature_names_reduced)] 
+playlist_songs_scaled <- playlist_songs %>%
+  mutate_if(is.numeric, scale)
 
-train_resp <- playlist_songs[training_songs, 'playlist_genre']
-test_resp <- playlist_songs[-training_songs, 'playlist_genre']
+set.seed(1234)
+training_songs <- sample(1:nrow(playlist_songs_scaled), nrow(playlist_songs_scaled)*.80, replace = FALSE)
+train_set <- playlist_songs_scaled[training_songs, c('playlist_genre', feature_names_reduced)] 
+test_set <- playlist_songs_scaled[-training_songs, c('playlist_genre', feature_names_reduced)] 
+
+train_resp <- playlist_songs_scaled[training_songs, 'playlist_genre']
+test_resp <- playlist_songs_scaled[-training_songs, 'playlist_genre']
+```
+
+``` r
+classification_plot <- function(compare_df, model_name){
+  
+  compare_df %>%
+    count(true_value, predicted_value) %>%
+    mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE)) %>%
+    ggplot(aes(x = true_value, y = n)) +
+    geom_col(aes(fill = match), position = 'dodge') +
+    facet_wrap(~predicted_value, ncol = 3) +
+    coord_flip() + 
+    labs(title = paste0('Genre classification accuracy, ', model_name)) +
+    theme_kp() +
+    scale_fill_kp()
+  
+  
+}
 ```
 
 ### K Nearest Neighbors
@@ -179,11 +197,11 @@ test_resp <- playlist_songs[-training_songs, 'playlist_genre']
 # at various values of k
 select_k <- NULL
 
-for(i in 1:10){
-  kresult <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = i)
+for(i in 1:50){
+  result_knn <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = i)
 
   compare_knn <- data.frame(true_value = test_resp,
-                                predicted_value = kresult,
+                                predicted_value = result_knn,
                                 stringsAsFactors = FALSE) %>%
     count(true_value, predicted_value) %>%
     mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE))
@@ -201,43 +219,40 @@ for(i in 1:10){
   
 }
 
-# 1 is the best
-kresult <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = 1)
-
-# check
-compare_knn <- data.frame(true_value = test_resp,
-                              predicted_value = kresult,
-                              stringsAsFactors = FALSE) %>%
-  count(true_value, predicted_value) %>%
-  mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE))
-
-accuracy_knn <- compare_knn %>%
-  group_by(match) %>%
-  summarise(n = sum(n)) %>%
-  ungroup() %>%
-  mutate(percent = n/sum(n),
-         model = 'knn') %>%
-  filter(match == TRUE)
-
-# visualize
-compare_knn %>%
-  ggplot(aes(x = true_value, y = n)) +
-  geom_col(aes(fill = match), position = 'dodge') +
-  facet_wrap(~predicted_value, ncol = 3) +
-  coord_flip() + 
-  labs(title = 'Genre classification accuracy, KNN') +
+select_k %>%
+  ggplot(aes(x = k, y = percent)) + 
+  geom_point() + 
+  geom_line() +
   theme_kp() +
-  scale_fill_kp()
+  labs(title = 'Accuracy by Number of Neighbors',
+       x = 'Number of Neighbors (k)',
+       y = 'Percent of observations accurately classified')
 ```
 
 ![](spotify_genres_files/figure-gfm/knn-1.png)<!-- -->
 
+``` r
+# 29 is the best
+result_knn <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = 29)
+
+# check
+compare_knn <- data.frame(true_value = test_resp,
+                          predicted_value = result_knn,
+                          model = 'knn',
+                          stringsAsFactors = FALSE)
+
+# visualize
+classification_plot(compare_knn, 'KNN')
+```
+
+![](spotify_genres_files/figure-gfm/knn-2.png)<!-- -->
+
 ### Random Forest
 
 ``` r
-rfresult <- randomForest(as.factor(playlist_genre) ~ ., ntree = 100, importance = TRUE, data = train_set)
+result_rf <- randomForest(as.factor(playlist_genre) ~ ., ntree = 100, importance = TRUE, data = train_set)
 
-importance(rfresult, type = 1) %>%
+importance(result_rf, type = 1) %>%
   as.data.frame() %>%
   mutate(measure = row.names(.)) %>%
   ggplot(aes(x = reorder(measure, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) +
@@ -251,50 +266,69 @@ importance(rfresult, type = 1) %>%
 ![](spotify_genres_files/figure-gfm/random_forest-1.png)<!-- -->
 
 ``` r
-predict_rf <- predict(rfresult, test_set)
+predict_rf <- predict(result_rf, test_set)
 
-compare_rf <- test_set %>%
-  cbind(predict_rf) %>%
-  count(playlist_genre, predict_rf) %>%
-  mutate(match = ifelse(playlist_genre == predict_rf, TRUE, FALSE))
+compare_rf <- data.frame(true_value = test_resp,
+                         predicted_value = predict_rf,
+                         model = 'random_forest',
+                         stringsAsFactors = FALSE) 
 
-accuracy_rf <- compare_rf %>%
-  group_by(match) %>%
-  summarise(n = sum(n)) %>%
-  ungroup() %>%
-  mutate(percent = n/sum(n),
-         model = 'random forest') %>%
-  filter(match == TRUE)
-
-compare_rf %>%
-  ggplot(aes(x = playlist_genre, y = n)) +
-  geom_col(aes(fill = match), position = 'dodge') +
-  facet_wrap(~predict_rf, ncol = 3) +
-  coord_flip() + 
-  labs(title = 'Genre classification accuracy, Random Forest') +
-  theme_kp() +
-  scale_fill_kp()
+# visualize
+classification_plot(compare_rf, 'Random Forest')
 ```
 
 ![](spotify_genres_files/figure-gfm/random_forest-2.png)<!-- -->
 
+### Neural Network
+
+``` r
+result_nn <- neuralnet(playlist_genre ~ ., data = train_set)
+
+predict_nn <- predict(object = result_nn, newdata = test_set, type = 'class')
+max_id <- apply(predict_nn, 1, which.max)
+pred <- levels(as.factor(test_set$playlist_genre))[max_id]
+
+compare_nn <- data.frame(true_value = test_set$playlist_genre,
+                         predicted_value = pred,
+                         model = 'neural_network',
+                         stringsAsFactors = FALSE)
+
+# visualize
+classification_plot(compare_nn, 'Neural Network')
+```
+
+![](spotify_genres_files/figure-gfm/nn-1.png)<!-- -->
+
+``` r
+plot(result_nn)
+```
+
 ### Model Comparison
 
 ``` r
-accuracy_knn %>%
-  rbind(accuracy_rf) %>%
-  mutate(accuracy = percent(percent,2)) %>%
+classification_test_results <- compare_knn %>%
+  rbind(compare_rf) %>%
+  rbind(compare_nn)
+
+accuracy_results <- classification_test_results %>%
+  mutate(match = ifelse(true_value == predicted_value, 1, 0)) %>%
+  group_by(model) %>%
+  summarise(accurate = sum(match),
+            total = n()) %>%
+  ungroup() %>%
+  mutate(accuracy = accurate/total)
+
+accuracy_results %>%
+  #mutate(accuracy = formattable::percent(percent,2)) %>%
   select(model, accuracy) %>%
+  arrange(desc(accuracy)) %>%
   knitr::kable()
 ```
 
-| model         | accuracy |
-| :------------ | -------: |
-| knn           |   30.61% |
-| random forest |   53.53% |
+| model           |  accuracy |
+| :-------------- | --------: |
+| random\_forest  | 0.5327004 |
+| knn             | 0.4761905 |
+| neural\_network | 0.3021398 |
 
-## Subgenres
-
-Can we predict subgenres within a parent genre? How accurate would we be
-if we predicted the parent genre, then moved onto a model to predict the
-sub?
+### Appendix
