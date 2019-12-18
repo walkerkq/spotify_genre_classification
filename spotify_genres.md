@@ -4,22 +4,55 @@ Spotify Audio Features + Music Genres
 Classifying songs into major music genres Understanding the how
 Spotify’s audio features map onto major music genres
 
+## Exploring Spotify’s audio features
+
 Spotify provies 12 [audio
 features](https://developer.spotify.com/documentation/web-api/reference/object-model/#audio-features-object)
 for each track, including confidence measures like `acousticness`,
 `liveness`, `speechiness` and `instrumentalness`, perceptual measures
-like `energy`, `loudness`, `danceability` and `valuence` (positiveness),
+like `energy`, `loudness`, `danceability` and `valence` (positiveness),
 and descriptors like `duration`, `tempo`, `key`, and `mode`.
+
+It’s likely that Spotify uses these features to power their algorithms
+for products like Spotify Radio and custom playlists like Discover
+Weekly and Daily Mixes. Of course, those algorithms also make use of
+Spotify’s vast listener data - your listening and playlist curation
+history, as well as the data from users similar to you.
+
+Typically, genre operates in a very subjective zone, where there are no
+hard and fast rules for classifying a given track or artist as “hard
+rock” vs. “folk rock,” but rather the listener knows it when they hear
+it. Spotify has the benefit of letting humans create relationships
+between songs and weigh in on genre via listening and creating
+playlists. With just the quantitative features, is it possible to
+classify songs into broad genres? And what can these audio features tell
+us about the qualities of each genre?
+
+We’ll look into a sample of songs from six broad genres - pop, rap,
+rock, latin, EDM, and R\&B - to find out.
+
+### Getting the data
+
+Genres were selected from [Every
+Noise](http://everynoise.com/everynoise1d.cgi?scope=all), a fascinating
+visualization of the Spotify genre-space maintained by a genre
+taxonomist. The top four sub-genres for each were used to query Spotify
+for 20 playlists each, resulting in about 5000 songs for each genre,
+split across a varied sub-genre space.
 
 ``` r
 library(tidyverse)
-library(randomForest)
 library(formattable)
-library(neuralnet)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(xgboost)
 source('../kp_themes/theme_kp.R')
 
 knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, warning = FALSE, error = FALSE, message = FALSE)
 ```
+
+### Exploring audio features by genre
 
 ``` r
 # refer to spotify_dataset.R for how this dataset was generated
@@ -57,8 +90,8 @@ danceability may provide the most separation between genres during
 classification, while instrumentalness and key and key may not help
 much.
 
-How do these features correlate with one another? Are there any that are
-redundant?
+How do these features correlate with one another? Are there any that may
+be redundant?
 
 ``` r
 playlist_songs %>%
@@ -83,6 +116,11 @@ playlist_songs %>%
 Energy and loudness are fairly highly correlated (0.68). Let’s remove
 loudness, since energy appears to give more distinction between genre
 groups (as seen in the density plot).
+
+Energy and acousticness are negatively correlated, which makes sense,
+along with the positive correlation between danceability and valence
+(happier songs lead to more dancing). Liveness, tempo, and energy are
+clustered together, as are speechiness and danceability.
 
 ``` r
 # remove loudness
@@ -157,7 +195,23 @@ correlations of any genre pairs.The rest of the genres don’t negatively
 or positively correlate much with one another, which may make them hard
 to classify.
 
+## Classifying songs into genres using audio features
+
+Our first question was *is it possible* to classify songs into genres
+with just audio features; our secondary question is *what can these
+audio features tell us* about the distinctions between genre. With that
+aim, we should focus on classification models that are interpretable and
+provide insight into which features were important in organizing a new
+song into a given genre.
+
+Classification algorithms that allow for greater interpretation of the
+features include `decision trees`, `random forests`, and `gradient
+boosting`.
+
 ### Preparing the data for training
+
+First, we’ll scale the numeric features, and then split into a training
+set (80% of the songs) and a test set (20%).
 
 ``` r
 playlist_songs_scaled <- playlist_songs %>%
@@ -190,83 +244,71 @@ classification_plot <- function(compare_df, model_name){
 }
 ```
 
-### K Nearest Neighbors
+### PCA ?
+
+### Decision Tree
 
 ``` r
-# run k nearest neighbors 
-# at various values of k
-select_k <- NULL
+#https://medium.com/analytics-vidhya/a-guide-to-machine-learning-in-r-for-beginners-decision-trees-c24dfd490abb
+model_dt <- rpart(playlist_genre ~ ., data = train_set)
 
-for(i in 1:50){
-  result_knn <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = i)
-
-  compare_knn <- data.frame(true_value = test_resp,
-                                predicted_value = result_knn,
-                                stringsAsFactors = FALSE) %>%
-    count(true_value, predicted_value) %>%
-    mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE))
-  
-  accuracy_knn <- compare_knn %>%
-    group_by(match) %>%
-    summarise(n = sum(n)) %>%
-    ungroup() %>%
-    mutate(percent = n/sum(n),
-           k = i,
-           model = 'knn') %>%
-    filter(match == TRUE)
-    
-  select_k <- rbind(select_k, accuracy_knn)
-  
-}
-
-select_k %>%
-  ggplot(aes(x = k, y = percent)) + 
-  geom_point() + 
-  geom_line() +
-  theme_kp() +
-  labs(title = 'Accuracy by Number of Neighbors',
-       x = 'Number of Neighbors (k)',
-       y = 'Percent of observations accurately classified')
+rpart.plot(model_dt, 
+           type = 5, 
+           extra = 104,
+           box.palette = list(purple = "#490B32",
+               red = "#9A031E",
+               orange = '#FB8B24',
+               dark_blue = "#0F4C5C",
+               blue = "#5DA9E9",
+               grey = '#66717E'),
+           leaf.round = 0,
+           fallen.leaves = FALSE, 
+           branch = 0.3, 
+           under = TRUE,
+           under.col = 'grey40',
+           family = 'Avenir',
+           main = 'Genre Decision Tree',
+           tweak = 1.2)
 ```
 
-![](spotify_genres_files/figure-gfm/knn-1.png)<!-- -->
+![](spotify_genres_files/figure-gfm/dt-1.png)<!-- -->
 
 ``` r
-# 29 is the best
-result_knn <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = 29)
+predict_dt <- predict(object = model_dt, newdata = test_set)
+max_id <- apply(predict_dt, 1, which.max)
+pred <- levels(as.factor(test_set$playlist_genre))[max_id]
 
-# check
-compare_knn <- data.frame(true_value = test_resp,
-                          predicted_value = result_knn,
-                          model = 'knn',
-                          stringsAsFactors = FALSE)
+compare_dt <- data.frame(true_value = test_set$playlist_genre,
+                         predicted_value = pred,
+                         model = 'decision_tree',
+                         stringsAsFactors = FALSE)
 
 # visualize
-classification_plot(compare_knn, 'KNN')
+classification_plot(compare_dt, 'Decision Tree')
 ```
 
-![](spotify_genres_files/figure-gfm/knn-2.png)<!-- -->
+![](spotify_genres_files/figure-gfm/dt-2.png)<!-- -->
 
 ### Random Forest
 
 ``` r
-result_rf <- randomForest(as.factor(playlist_genre) ~ ., ntree = 100, importance = TRUE, data = train_set)
+model_rf <- randomForest(as.factor(playlist_genre) ~ ., ntree = 100, importance = TRUE, data = train_set)
 
-importance(result_rf, type = 1) %>%
+importance(model_rf, type = 1) %>%
   as.data.frame() %>%
   mutate(measure = row.names(.)) %>%
   ggplot(aes(x = reorder(measure, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) +
   geom_point() +
   coord_flip() +
   theme_kp() +
-  labs(title = 'Random Forest Variable Importance',
+  labs(title = 'Variable Importance, Random Forest',
        y = 'Mean Decrease in Accuracy', x = '')
 ```
 
 ![](spotify_genres_files/figure-gfm/random_forest-1.png)<!-- -->
 
 ``` r
-predict_rf <- predict(result_rf, test_set)
+predict_rf <- predict(model_rf, test_set)
 
 compare_rf <- data.frame(true_value = test_resp,
                          predicted_value = predict_rf,
@@ -279,36 +321,79 @@ classification_plot(compare_rf, 'Random Forest')
 
 ![](spotify_genres_files/figure-gfm/random_forest-2.png)<!-- -->
 
-### Neural Network
+### Gradient Boosting
 
 ``` r
-result_nn <- neuralnet(playlist_genre ~ ., data = train_set)
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+matrix_train_gb <- xgb.DMatrix(data = as.matrix(train_set[,-1]), label = as.numeric(as.factor(train_set[,1])))
+matrix_test_gb <- xgb.DMatrix(data = as.matrix(test_set[,-1]), label = as.numeric(as.factor(test_set[,1])))
 
-predict_nn <- predict(object = result_nn, newdata = test_set, type = 'class')
-max_id <- apply(predict_nn, 1, which.max)
-pred <- levels(as.factor(test_set$playlist_genre))[max_id]
+model_gb <- xgboost(data = matrix_train_gb, 
+                    nrounds = 25)
+```
 
-compare_nn <- data.frame(true_value = test_set$playlist_genre,
-                         predicted_value = pred,
-                         model = 'neural_network',
-                         stringsAsFactors = FALSE)
+    ## [1]  train-rmse:2.606971 
+    ## [2]  train-rmse:2.082558 
+    ## [3]  train-rmse:1.757624 
+    ## [4]  train-rmse:1.557356 
+    ## [5]  train-rmse:1.446128 
+    ## [6]  train-rmse:1.375646 
+    ## [7]  train-rmse:1.335200 
+    ## [8]  train-rmse:1.311780 
+    ## [9]  train-rmse:1.297998 
+    ## [10] train-rmse:1.284344 
+    ## [11] train-rmse:1.275557 
+    ## [12] train-rmse:1.263547 
+    ## [13] train-rmse:1.259213 
+    ## [14] train-rmse:1.254474 
+    ## [15] train-rmse:1.249747 
+    ## [16] train-rmse:1.247368 
+    ## [17] train-rmse:1.241156 
+    ## [18] train-rmse:1.238119 
+    ## [19] train-rmse:1.235940 
+    ## [20] train-rmse:1.231966 
+    ## [21] train-rmse:1.230567 
+    ## [22] train-rmse:1.226848 
+    ## [23] train-rmse:1.220060 
+    ## [24] train-rmse:1.215683 
+    ## [25] train-rmse:1.208768
+
+``` r
+xgb.importance(model = model_gb) %>%
+  ggplot(aes(x = reorder(Feature, Gain), y = Gain)) +
+  geom_point() +
+  coord_flip() +
+  theme_kp() +
+  labs(title = 'Variable Importance, xgboost',
+       y = 'Gain', x = '')
+```
+
+![](spotify_genres_files/figure-gfm/gradientboost-1.png)<!-- -->
+
+``` r
+predict_gb <- predict(model_gb, matrix_test_gb)
+predict_gb <- round(predict_gb)
+predict_gb[predict_gb == 0] <- 1
+predict_gb[predict_gb == 7] <- 6
+predict_gb <- levels(as.factor(test_set$playlist_genre))[predict_gb]
+
+compare_gb <- data.frame(true_value = test_resp,
+                         predicted_value = predict_gb,
+                         model = 'xgboost',
+                         stringsAsFactors = FALSE) 
 
 # visualize
-classification_plot(compare_nn, 'Neural Network')
+classification_plot(compare_gb, 'Gradient Boosting')
 ```
 
-![](spotify_genres_files/figure-gfm/nn-1.png)<!-- -->
-
-``` r
-plot(result_nn)
-```
+![](spotify_genres_files/figure-gfm/gradientboost-2.png)<!-- -->
 
 ### Model Comparison
 
 ``` r
-classification_test_results <- compare_knn %>%
-  rbind(compare_rf) %>%
-  rbind(compare_nn)
+classification_test_results <- compare_rf %>%
+  rbind(compare_dt) %>%
+  rbind(compare_gb)
 
 accuracy_results <- classification_test_results %>%
   mutate(match = ifelse(true_value == predicted_value, 1, 0)) %>%
@@ -319,16 +404,65 @@ accuracy_results <- classification_test_results %>%
   mutate(accuracy = accurate/total)
 
 accuracy_results %>%
-  #mutate(accuracy = formattable::percent(percent,2)) %>%
+  mutate(accuracy = formattable::percent(accuracy,2)) %>%
   select(model, accuracy) %>%
   arrange(desc(accuracy)) %>%
   knitr::kable()
 ```
 
-| model           |  accuracy |
-| :-------------- | --------: |
-| random\_forest  | 0.5327004 |
-| knn             | 0.4761905 |
-| neural\_network | 0.3021398 |
+| model          | accuracy |
+| :------------- | -------: |
+| random\_forest |   53.72% |
+| decision\_tree |   38.02% |
+| xgboost        |   30.23% |
 
 ### Appendix
+
+``` r
+# run k nearest neighbors 
+# at various values of k
+# select_k <- NULL
+# 
+# for(i in 1:50){
+#   result_knn <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = i)
+# 
+#   compare_knn <- data.frame(true_value = test_resp,
+#                                 predicted_value = result_knn,
+#                                 stringsAsFactors = FALSE) %>%
+#     count(true_value, predicted_value) %>%
+#     mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE))
+#   
+#   accuracy_knn <- compare_knn %>%
+#     group_by(match) %>%
+#     summarise(n = sum(n)) %>%
+#     ungroup() %>%
+#     mutate(percent = n/sum(n),
+#            k = i,
+#            model = 'knn') %>%
+#     filter(match == TRUE)
+#     
+#   select_k <- rbind(select_k, accuracy_knn)
+#   
+# }
+# 
+# select_k %>%
+#   ggplot(aes(x = k, y = percent)) + 
+#   geom_point() + 
+#   geom_line() +
+#   theme_kp() +
+#   labs(title = 'Accuracy by Number of Neighbors',
+#        x = 'Number of Neighbors (k)',
+#        y = 'Percent of observations accurately classified')
+# 
+# # 29 is the best
+# result_knn <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = 29)
+# 
+# # check
+# compare_knn <- data.frame(true_value = test_resp,
+#                           predicted_value = result_knn,
+#                           model = 'knn',
+#                           stringsAsFactors = FALSE)
+# 
+# # visualize
+# classification_plot(compare_knn, 'KNN')
+```
