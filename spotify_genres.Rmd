@@ -65,7 +65,11 @@ playlist_songs <- read.csv('genre_songs_expanded.csv', stringsAsFactors = FALSE)
 
 feature_names <- names(playlist_songs)[12:23]
 
-glimpse(playlist_songs)
+glimpse(playlist_songs,width = 60)
+
+playlist_songs %>% 
+  count(playlist_genre) %>%
+  knitr::kable()
 ```
 
 ### Exploring audio features by genre  
@@ -102,11 +106,11 @@ playlist_songs %>%
   labs(title = 'Duration') +
   theme_kp() 
 
-duration_outliers <- boxplot(playlist_songs$duration_ms, plot = FALSE, range = 4)$out
+duration_outliers <- boxplot(playlist_songs$duration_ms, 
+                             plot = FALSE, range = 4)$out
 
 playlist_songs_no_outliers <- playlist_songs %>%
   filter(!duration_ms %in% duration_outliers) 
-
 ```
 
 There were `r length(duration_outliers)` songs that were defined as outliers and removed from the dataset.  
@@ -127,7 +131,10 @@ playlist_songs_no_outliers %>%
                      tl.col = 'black',
                      addCoef.col = "grey30",
                      number.cex = 0.6,
-                     col = colorRampPalette(colors = c(kp_cols('red'), 'white', kp_cols('dark_blue')))(200),
+                     col = colorRampPalette(colors = c(
+                       kp_cols('red'), 
+                       'white', 
+                       kp_cols('dark_blue')))(200),
                      main = 'Audio Feature Correlation',
                      mar = c(2,2,2,2),
                      family = 'Avenir')
@@ -195,7 +202,10 @@ genre_cor_matrix %>%
                      tl.col = 'black',
                      addCoef.col = "grey40",
                      number.cex = 0.75,
-                     col = colorRampPalette(colors = c(kp_cols('red'), 'white', kp_cols('dark_blue')))(200),
+                     col = colorRampPalette(colors = c(
+                       kp_cols('red'), 
+                       'white', 
+                       kp_cols('dark_blue')))(200),
                      mar = c(2,2,2,2),
                      main = '\nAverage Correlation Between Genre Songs',
                      family = 'Avenir'
@@ -401,10 +411,17 @@ compare_dt %>%
   group_by(true_value, model) %>%
   mutate(pct = n/sum(n)) %>% 
   ungroup() %>%
-  mutate(label = ifelse(match == TRUE, paste0(round(pct * 100,1),'%'), "")) %>%
-  ggplot(aes(x = true_value, y = n, fill = predicted_value, label = label)) +
+  mutate(label = ifelse(match == TRUE, 
+                        paste0(round(pct * 100,1),'%'), 
+                        "")) %>%
+  ggplot(aes(x = true_value, 
+             y = n, 
+             fill = predicted_value, 
+             label = label)) +
   geom_col(position = 'dodge') +
-  geom_text(position = position_dodge(width = 1), cex = 2.75, hjust = -0.1) +
+  geom_text(position = position_dodge(width = 1), 
+            cex = 2.75, 
+            hjust = -0.1) +
   facet_wrap( ~ model, ncol = 3) +
   coord_flip() + 
   labs(title = 'Genre Accuracy by Model',
@@ -478,7 +495,7 @@ PC %>%
   ggplot(aes(x = PC1, y = PC2, color = playlist_genre)) + 
   geom_point(alpha = 0.25) + 
   facet_wrap(~playlist_genre) +
-  labs(title =paste('Plotting principal components 1 vs 2')) +
+  labs(title = 'Plotting principal components 1 vs 2') +
   theme_kp() + 
   scale_color_kp(palette = 'mixed') 
 
