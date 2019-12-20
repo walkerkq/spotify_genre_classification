@@ -1,35 +1,65 @@
 Spotify Audio Features + Music Genres
 ================
 
-Classifying songs into major music genres Understanding the how
-Spotify’s audio features map onto major music genres
-
 ## Exploring Spotify’s audio features
 
-Spotify provies 12 [audio
+The [Spotify Web
+API](https://developer.spotify.com/documentation/web-api/) provides
+artist, album, and track data, as well as audio features and analysis,
+all easily accessible via the R package
+[`spotifyr`](https://github.com/charlie86/spotifyr).
+
+There are 12 [audio
 features](https://developer.spotify.com/documentation/web-api/reference/object-model/#audio-features-object)
 for each track, including confidence measures like `acousticness`,
 `liveness`, `speechiness` and `instrumentalness`, perceptual measures
 like `energy`, `loudness`, `danceability` and `valence` (positiveness),
 and descriptors like `duration`, `tempo`, `key`, and `mode`.
 
-It’s likely that Spotify uses these features to power their algorithms
-for products like Spotify Radio and custom playlists like Discover
-Weekly and Daily Mixes. Of course, those algorithms also make use of
-Spotify’s vast listener data - your listening and playlist curation
-history, as well as the data from users similar to you.
+It’s likely that Spotify uses these features to power products like
+Spotify Radio and custom playlists like Discover Weekly and Daily Mixes.
+Of course, those products definitely also make use of Spotify’s vast
+listener data like listening history and playlist curation, for you and
+users similar to you.
 
-Typically, genre operates in a very subjective zone, where there are no
-hard and fast rules for classifying a given track or artist as “hard
-rock” vs. “folk rock,” but rather the listener knows it when they hear
-it. Spotify has the benefit of letting humans create relationships
-between songs and weigh in on genre via listening and creating
-playlists. With just the quantitative features, is it possible to
-classify songs into broad genres? And what can these audio features tell
-us about the qualities of each genre?
+Musical genre is far from black and white - there are no hard and fast
+rules for classifying a given track or artist as “hard rock” vs. “folk
+rock,” but rather the listener knows it when they hear it. Spotify has
+the benefit of letting humans create relationships between songs and
+weigh in on genre via listening and creating playlists. With just the
+quantitative features, is it possible to classify songs into broad
+genres? And what can these audio features tell us about the qualities of
+each genre?
 
-We’ll look into a sample of songs from six broad genres - pop, rap,
-rock, latin, EDM, and R\&B - to find out.
+We’ll look into a sample of songs from six broad genres - `pop`, `rap`,
+`rock`, `latin`, `EDM`, and `R&B` - to find out.
+
+### TL;DR:
+
+`Rap`: speechy.  
+`Rock`: can’t dance to it.  
+`EDM`: high tempo.  
+`R&B`: long songs.  
+`Latin`: very danceable.  
+`Pop`: everything else.
+
+### Table of Contents
+
+  - Getting the data  
+  - Exploring audio features by genre
+      - Removing outliers  
+      - Correlation between features  
+      - Correlation within genres  
+  - Classifying songs into genres using audio features
+      - Preparing the data for training  
+      - Modeling
+          - Decision tree  
+          - Random forest  
+          - Gradient boosting with XGBoost  
+      - Model comparison
+          - Variable importance  
+          - Accuracy comparison  
+  - Bonus: Principal component analysis of features
 
 ### Getting the data
 
@@ -44,20 +74,48 @@ split across a varied sub-genre space.
 library(tidyverse)
 library(formattable)
 library(randomForest)
-library(randomForestExplainer)
 library(rpart)
 library(rpart.plot)
 library(xgboost)
 source('../kp_themes/theme_kp.R')
 options(scipen = 999)
 
-knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, warning = FALSE, error = FALSE, message = FALSE)
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, 
+                      warning = FALSE, error = FALSE, message = FALSE)
 
 # refer to spotify_dataset.R for how this dataset was generated
 playlist_songs <- read.csv('genre_songs_expanded.csv', stringsAsFactors = FALSE) 
 
 feature_names <- names(playlist_songs)[12:23]
+
+glimpse(playlist_songs)
 ```
+
+    ## Observations: 33,179
+    ## Variables: 23
+    ## $ track.id                 <chr> "6f807x0ima9a1j3VPbc7VN", "1z1Hg7Vb0AhH…
+    ## $ track.name               <chr> "I Don't Care (with Justin Bieber) - Lo…
+    ## $ track.artist             <chr> "Ed Sheeran", "Zara Larsson", "Ellie Go…
+    ## $ track.popularity         <int> 68, 72, 69, 74, 70, 69, 62, 69, 70, 71,…
+    ## $ track.album.id           <chr> "2oCs0DGTsRO98Gh5ZSl2Cx", "1HoSmj2eLcsr…
+    ## $ track.album.name         <chr> "I Don't Care (with Justin Bieber) [Lou…
+    ## $ track.album.release_date <chr> "2019-06-14", "2019-07-05", "2019-05-10…
+    ## $ playlist_name            <chr> "Pop Remix", "Pop Remix", "Pop Remix", …
+    ## $ playlist_id              <chr> "37i9dQZF1DXcZDD7cfEKhW", "37i9dQZF1DXc…
+    ## $ playlist_genre           <chr> "pop", "pop", "pop", "pop", "pop", "pop…
+    ## $ playlist_subgenre        <chr> "dance pop", "dance pop", "dance pop", …
+    ## $ danceability             <dbl> 0.748, 0.675, 0.493, 0.564, 0.642, 0.67…
+    ## $ energy                   <dbl> 0.916, 0.931, 0.773, 0.747, 0.818, 0.91…
+    ## $ key                      <int> 6, 1, 5, 5, 2, 8, 7, 1, 4, 1, 5, 8, 5, …
+    ## $ loudness                 <dbl> -2.634, -3.432, -3.791, -3.374, -4.552,…
+    ## $ mode                     <int> 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, …
+    ## $ speechiness              <dbl> 0.0583, 0.0742, 0.1570, 0.0584, 0.0320,…
+    ## $ acousticness             <dbl> 0.10200, 0.07940, 0.42900, 0.07280, 0.0…
+    ## $ instrumentalness         <dbl> 0.00000000, 0.00002330, 0.00000707, 0.0…
+    ## $ liveness                 <dbl> 0.0653, 0.1100, 0.0807, 0.1510, 0.0919,…
+    ## $ valence                  <dbl> 0.518, 0.613, 0.301, 0.717, 0.590, 0.58…
+    ## $ tempo                    <dbl> 122.036, 124.008, 123.149, 97.878, 124.…
+    ## $ duration_ms              <int> 194754, 176616, 193548, 165767, 253040,…
 
 ### Exploring audio features by genre
 
@@ -79,15 +137,15 @@ playlist_songs %>%
 
 Overall, the songs in the dataset tend to have low acousticness,
 liveness, instrumentalness and speechiness, with higher danceability,
-energy, and loudness. Valence is evenly distributed.
+energy, and loudness. Valence varies across genres.
 
-Breaking things out by genre, EDM tracks are least likely to be acoustic
-and most likely to have high energy with low valence (sad or depressed);
-latin tracks have high valence (are positive or cheerful) and
-danceability; rap songs score highly for speechiness and danceability;
-and rock songs are most likely to be recorded live and have low
-danceability. Pop, latin and EDM songs are more likely to have shorter
-durations compared to R\&B, rap, and rock.
+Breaking things out by genre, `EDM` tracks are least likely to be
+acoustic and most likely to have high energy with low valence (sad or
+depressed); `latin` tracks have high valence (are positive or cheerful)
+and danceability; `rap` songs score highly for speechiness and
+danceability; and `rock` songs are most likely to be recorded live and
+have low danceability. `Pop`, `latin` and `EDM` songs are more likely to
+have shorter durations compared to `R&B`, `rap`, and `rock.`
 
 Based on the density plot, it looks like energy, valence, tempo and
 danceability may provide the most separation between genres during
@@ -110,8 +168,8 @@ playlist_songs %>%
   ggplot(aes(y = duration_ms)) +
   geom_boxplot(color = kp_cols('red'), coef = 4) +
   coord_flip() +
-  theme_kp() +
-  labs(title = 'Duration')
+  labs(title = 'Duration') +
+  theme_kp() 
 ```
 
 ![](spotify_genres_files/figure-gfm/outliers-1.png)<!-- -->
@@ -167,7 +225,7 @@ danceability is negatively correlated with tempo and energy.
 feature_names_reduced <- names(playlist_songs)[c(12:14,16:23)]
 ```
 
-#### Correlation between genres
+#### Correlation within genres
 
 How do the genres correlate with each other? How consistent are songs
 within a given genre?
@@ -242,103 +300,6 @@ negative correlations of any genre pairs.The rest of the genres don’t
 negatively or positively correlate much with one another, which may make
 them hard to classify.
 
-#### Principal component analysis of features
-
-One way to reduce dimensionality and understand the relationship between
-features is to compute their principal components. [Principal Component
-Analysis (PCA)](https://uc-r.github.io/pca) reduces the number of
-variables in a dataset by finding combinations of those variables,
-called principal components, that explain the majority of the
-variability in the dataset.
-
-First, we’ll find the covariance between the features, and then their
-eigenvalues and eigenvectors. The eigenvalues tell us what percentage of
-the variability the principal component (PC) explains, and the
-eigenvector describes how the PC summarises the features. We don’t need
-to use all the PCs (n-1, so 11 in this case), but generally can simplify
-by choosing the number of PCs that together explain the majority of the
-variance (75-90%).
-
-``` r
-playlist_songs_scaled <- playlist_songs_no_outliers %>%
-  mutate_if(is.numeric, scale)
-
-song_cov <- cov(playlist_songs_scaled[,feature_names_reduced])
-song_eigen <- eigen(song_cov)
-
-data.frame(proporation_of_variance = song_eigen$values/sum(song_eigen$values)) %>%
-  mutate(cumulative_prop = cumsum(proporation_of_variance),
-         pc = 1:n()) %>%
-  ggplot(aes(x = pc, y = cumulative_prop)) + 
-  geom_point() + 
-  geom_line() +
-  ylim(c(0,1)) +
-  labs(title = 'Cumulative Scree Plot', 
-       x = 'Principal Component', y = 'Cumulative % of variance explained') +
-  theme_kp() 
-```
-
-![](spotify_genres_files/figure-gfm/pca-1.png)<!-- -->
-
-We would need to retain 7 PCs to explain \>75% of the variance, which is
-a great improvement from 12 features, but doesn’t help much with
-understanding the relationship between the features and song genres.
-
-Let’s look a litle closer at the first two for simplicity’s sake.
-
-``` r
-song_eigenvectors <- song_eigen$vectors[,1:2] * -1
-song_eigenvectors <- song_eigenvectors %>%
-  as.data.frame() %>%
-  mutate(feature = row.names(song_cov)) %>%
-  rename('PC1' = 'V1',
-         'PC2' = 'V2')
-
-song_eigenvectors %>%
-  pivot_longer(cols = c('PC1', 'PC2')) %>%
-  ggplot(aes(x = feature, y = value)) + 
-  geom_col(aes(fill = feature), position = 'dodge') +
-  facet_wrap(~name, ncol = 2) +
-  coord_flip() +
-  theme_kp() + 
-  scale_fill_kp() +
-  labs(title = 'Principal Component Loadings', 
-       x = 'loading', y = '')
-```
-
-![](spotify_genres_files/figure-gfm/pca_2-1.png)<!-- -->
-
-The first PC is characterized by high acoustincess and low tempo and
-energy; the second by low valence and danceability. Songs with similar
-scores will map onto these components.
-
-How does this map onto genres?
-
-``` r
-PC <- data.frame(playlist_genre = playlist_songs_scaled$playlist_genre,
-                 PC1 = as.matrix(playlist_songs_scaled[,feature_names_reduced]) %*% song_eigenvectors[,1], 
-                 PC2 = as.matrix(playlist_songs_scaled[,feature_names_reduced]) %*% song_eigenvectors[,2])
-
-PC %>% 
-  ggplot(aes(x = PC1, y = PC2, color = playlist_genre)) + 
-  geom_point(alpha = 0.25) + 
-  facet_wrap(~playlist_genre) +
-  labs(title =paste('Plotting principal components 1 vs 2')) +
-  theme_kp() + 
-  scale_color_kp(palette = 'mixed') 
-```
-
-![](spotify_genres_files/figure-gfm/pca_3-1.png)<!-- -->
-
-It’s clear once we plot the first two components against each other why
-they don’t explain all of the variability - the distributions of each
-genre look fairly similar to each other (i.e. the PCs are not clearly
-dividing them from each other). Pop and rock tend to push into the upper
-right quadrant, mapping slightly more strongly onto PC1 than the other
-genres, while EDM pushes into the top left quadrant, mapping more
-strongly onto PC2 than other genres, likely due to its
-characteristically low valence.
-
 ## Classifying songs into genres using audio features
 
 Our first question was *is it possible* to classify songs into genres
@@ -358,6 +319,9 @@ First, we’ll scale the numeric features, and then split into a training
 set (80% of the songs) and a test set (20%).
 
 ``` r
+playlist_songs_scaled <- playlist_songs_no_outliers %>%
+  mutate_if(is.numeric, scale)
+
 set.seed(1234)
 training_songs <- sample(1:nrow(playlist_songs_scaled), nrow(playlist_songs_scaled)*.80, replace = FALSE)
 train_set <- playlist_songs_scaled[training_songs, c('playlist_genre', feature_names_reduced)] 
@@ -367,25 +331,9 @@ train_resp <- playlist_songs_scaled[training_songs, 'playlist_genre']
 test_resp <- playlist_songs_scaled[-training_songs, 'playlist_genre']
 ```
 
-``` r
-classification_plot <- function(compare_df, model_name){
-  
-  compare_df %>%
-    count(true_value, predicted_value) %>%
-    mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE)) %>%
-    ggplot(aes(x = true_value, y = n)) +
-    geom_col(aes(fill = match), position = 'dodge') +
-    facet_wrap(~predicted_value, ncol = 3) +
-    coord_flip() + 
-    labs(title = paste0('Genre classification accuracy, ', model_name)) +
-    theme_kp() +
-    scale_fill_kp()
-  
-  
-}
-```
+### Modeling
 
-### Decision Tree
+#### Decision tree
 
 [Decision
 trees](https://medium.com/analytics-vidhya/a-guide-to-machine-learning-in-r-for-beginners-decision-trees-c24dfd490abb)
@@ -458,16 +406,20 @@ compare_dt <- data.frame(true_value = test_set$playlist_genre,
                          model = 'decision_tree',
                          stringsAsFactors = FALSE)
 
-# visualize
-classification_plot(compare_dt, 'Decision Tree')
+model_accuracy_calc <- function(df, model_name) {
+  df %>% 
+    mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE)) %>% 
+    count(match) %>% 
+    mutate(accuracy = n/sum(n),
+           model = model_name)
+}
+
+accuracy_dt <- model_accuracy_calc(df = compare_dt, model_name = 'decision_tree')
 ```
 
-![](spotify_genres_files/figure-gfm/dt_2-1.png)<!-- -->
+The decision tree model shows an overall accuracy of 37.9%.
 
-The results are similar in the test data. The tree struggled to
-distinguish between `pop`, `latin` and `R&B`, which all shared a branch.
-
-### Random Forest
+#### Random forest
 
 [Random
 forests](https://towardsdatascience.com/random-forest-in-r-f66adf80ec9)
@@ -483,35 +435,6 @@ importance.
 ``` r
 model_rf <- randomForest(as.factor(playlist_genre) ~ ., ntree = 100, importance = TRUE, data = train_set)
 
-importance(model_rf, type = 2) %>%
-  as.data.frame() %>%
-  mutate(measure = row.names(.)) %>%
-  ggplot(aes(x = reorder(measure, MeanDecreaseGini), y = MeanDecreaseGini)) +
-  geom_point(color = kp_cols('purple'), size = 2) +
-  coord_flip() +
-  theme_kp() +
-  labs(title = 'Variable Importance, Random Forest',
-       y = 'Mean decrease in node impurity', x = '')
-```
-
-![](spotify_genres_files/figure-gfm/random_forest-1.png)<!-- -->
-
-Variable importance here is ranked by the mean decrease in node impurity
-resulting from a split on that feature. For example, on average, a split
-on tempo resulted in the biggest decreases in node impurity, or rather,
-the greatest jumps in node purity. Since the first node generally
-creates the biggest reduction in impurity, this also indicates that
-tempo was the most common root node in the 100 decision trees in the
-model.
-
-Speechiness and danceability were also important features, as we saw in
-the decision tree model. Mode, key, liveness and instrumentalness
-contributed the least to reducing node impurity and were probably not
-found on most trees.
-
-Has predictive power increased from the single decision tree?
-
-``` r
 predict_rf <- predict(model_rf, test_set)
 
 compare_rf <- data.frame(true_value = test_resp,
@@ -519,16 +442,12 @@ compare_rf <- data.frame(true_value = test_resp,
                          model = 'random_forest',
                          stringsAsFactors = FALSE) 
 
-# visualize
-classification_plot(compare_rf, 'Random Forest')
+accuracy_rf <- model_accuracy_calc(df = compare_rf, model_name = 'random_forest')
 ```
 
-![](spotify_genres_files/figure-gfm/random_forest_2-1.png)<!-- -->
+The random forest model shows an overall accuracy of 54.4%.
 
-The random forest model improved from the single decision tree in
-predicting all classes but `pop`\!
-
-### Gradient Boosting with XGBoost
+#### Gradient boosting with XGBoost
 
 The next round of improvements to the random forest model come from
 boosting, or building models sequentially, minimizing errors and
@@ -553,27 +472,6 @@ model_gb <- xgboost(data = matrix_train_gb,
                     params = list(objective = "multi:softmax",
                                   num_class = 6 + 1))
 
-xgb.importance(model = model_gb) %>%
-  ggplot(aes(x = reorder(Feature, Gain), y = Gain)) +
-  geom_point(color = kp_cols('purple'), size = 2) +
-  coord_flip() +
-  theme_kp() +
-  labs(title = 'Variable Importance, XGBoost',
-       y = 'Gain', x = '')
-```
-
-![](spotify_genres_files/figure-gfm/gradientboost-1.png)<!-- -->
-
-Variables are ranked by gain to denote importance to the XGBoost model,
-where gain refers to the improvement in accuracy contributed by the
-feature. Again, tempo is the most important variable, followed by
-speechiness, danceability, energy and valence, while key and mode fall
-to the bottom.
-
-Does gradient boosting provide significant increases to accuracy versus
-the random forest model?
-
-``` r
 predict_gb <- predict(model_gb, matrix_test_gb)
 predict_gb <- levels(as.factor(test_set$playlist_genre))[predict_gb]
 
@@ -582,71 +480,14 @@ compare_gb <- data.frame(true_value = test_resp,
                          model = 'xgboost',
                          stringsAsFactors = FALSE) 
 
-# visualize
-classification_plot(compare_gb, 'Gradient Boosting')
+accuracy_gb <- model_accuracy_calc(df = compare_gb, model_name = 'xgboost')
 ```
 
-![](spotify_genres_files/figure-gfm/gradient_boost_2-1.png)<!-- -->
+The gradient boosting model shows an overall accuracy of 53.8%.
 
-The classification plot looks nearly identical to the random forest
-classification plot, with slight improvements to the `edm` class.
+### Model comparison
 
-### Model Comparison
-
-``` r
-classification_test_results <- compare_rf %>%
-  rbind(compare_dt) %>%
-  rbind(compare_gb)
-
-accuracy_results <- classification_test_results %>%
-  mutate(match = ifelse(true_value == predicted_value, 1, 0)) %>%
-  group_by(model) %>%
-  summarise(accurate = sum(match),
-            total = n()) %>%
-  ungroup() %>%
-  mutate(accuracy = accurate/total)
-
-accuracy_results %>%
-  mutate(accuracy = formattable::percent(accuracy,2)) %>%
-  select(model, accuracy) %>%
-  arrange(desc(accuracy)) %>%
-  knitr::kable()
-```
-
-| model          | accuracy |
-| :------------- | -------: |
-| random\_forest |   54.39% |
-| xgboost        |   53.79% |
-| decision\_tree |   37.86% |
-
-How did each model fare for each genre?
-
-``` r
-classification_test_results %>%
-  count(true_value, predicted_value, model) %>%
-  mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE)) %>%
-  group_by(true_value, model, match) %>%
-  summarise(n = sum(n)) %>%
-  group_by(true_value, model) %>%
-  mutate(pct = n/sum(n)) %>%
-  ungroup() %>%
-  filter(match == TRUE) %>%
-  ggplot(aes(x = true_value, y = pct, fill = match)) +
-  geom_col(aes(fill = match), position = 'dodge') +
-  facet_wrap( ~ model, ncol = 3) +
-  coord_flip() + 
-  labs(title = 'Genre Accuracy by Model',
-       y = 'Percent accurately classified') +
-  theme_kp() +
-  scale_fill_kp()
-```
-
-![](spotify_genres_files/figure-gfm/compare_plot-1.png)<!-- -->
-
-All genres showed gains in accuracy as we moved from simpler to more
-complex (decision tree –\> XGBoost). `Pop`, `latin`, and `R&B` remained
-the most difficult to classify, while `EDM` and `rock` reached more than
-65% accuracy.
+#### Variable importance
 
 ``` r
 importance_dt <- data.frame(importance = model_dt$variable.importance)
@@ -661,58 +502,200 @@ compare_importance <- importance_gb %>%
   select(Feature, Gain) %>%
   left_join(importance_dt, by = c('Feature' = 'feature')) %>%
   left_join(importance_rf, by = c('Feature' = 'feature')) %>%
-  rename('xgboost_imp' = 'Gain',
-         'decision_tree_imp' = 'importance',
-         'random_forest_imp' = 'MeanDecreaseGini')
+  rename('xgboost' = 'Gain',
+         'decision_tree' = 'importance',
+         'random_forest' = 'MeanDecreaseGini') 
+
+compare_importance %>%
+  mutate_if(is.numeric, scale, center = TRUE) %>%
+  pivot_longer(cols = c('xgboost', 'decision_tree', 'random_forest')) %>%
+  rename('model' = 'name') %>%
+  ggplot(aes(x = reorder(Feature, value, mean, na.rm = TRUE), y = value, color = model)) + 
+  geom_point(size = 2) + 
+  coord_flip() +
+  labs(title = 'Variable Importance by Model',
+       subtitle = 'Scaled for comparison',
+       y = 'Scaled value', x = '') +
+  theme_kp() + 
+  scale_color_kp(palette = 'cool')
 ```
 
-### Appendix
+![](spotify_genres_files/figure-gfm/variable_importance-1.png)<!-- -->
+
+Each model uses a different measure for explaining variable importance.
+Decision trees provide a score for each feature based on its usefulness
+in splitting the data. For a random forest, we can use `mean decrease in
+node impurity`, which is the average decrease in node impurity/increase
+in node purity resulting from a split on a given feature. For XGBoost,
+we can use `gain`, or the improvement in accuracy contributed by a given
+feature. For all features, the top-ranked feature is typically the most
+common root node in the tree(s) as they tend to create the biggest
+reduction in impurity.
+
+The most important variable for the decision tree model was speechiness,
+while the random forest and XGBoost models found tempo to be the most
+useful. Danceability, energy, duration, and valence were also found to
+be important feautres for separting songs into genres, while mode and
+key didn’t contribute much.
+
+#### Accuracy
 
 ``` r
-# run k nearest neighbors 
-# at various values of k
-# select_k <- NULL
-# 
-# for(i in 1:50){
-#   result_knn <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = i)
-# 
-#   compare_knn <- data.frame(true_value = test_resp,
-#                                 predicted_value = result_knn,
-#                                 stringsAsFactors = FALSE) %>%
-#     count(true_value, predicted_value) %>%
-#     mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE))
-#   
-#   accuracy_knn <- compare_knn %>%
-#     group_by(match) %>%
-#     summarise(n = sum(n)) %>%
-#     ungroup() %>%
-#     mutate(percent = n/sum(n),
-#            k = i,
-#            model = 'knn') %>%
-#     filter(match == TRUE)
-#     
-#   select_k <- rbind(select_k, accuracy_knn)
-#   
-# }
-# 
-# select_k %>%
-#   ggplot(aes(x = k, y = percent)) + 
-#   geom_point() + 
-#   geom_line() +
-#   theme_kp() +
-#   labs(title = 'Accuracy by Number of Neighbors',
-#        x = 'Number of Neighbors (k)',
-#        y = 'Percent of observations accurately classified')
-# 
-# # 29 is the best
-# result_knn <- class::knn(train = train_set[,-1], test = test_set[,-1], cl = train_resp, k = 29)
-# 
-# # check
-# compare_knn <- data.frame(true_value = test_resp,
-#                           predicted_value = result_knn,
-#                           model = 'knn',
-#                           stringsAsFactors = FALSE)
-# 
-# # visualize
-# classification_plot(compare_knn, 'KNN')
+accuracy_rf %>%
+  rbind(accuracy_dt) %>%
+  rbind(accuracy_gb) %>%
+  filter(match == TRUE) %>%
+  select(model, accuracy) %>%
+  mutate(accuracy = percent(accuracy,2)) %>%
+  knitr::kable()
 ```
+
+| model          | accuracy |
+| :------------- | -------: |
+| random\_forest |   54.39% |
+| decision\_tree |   37.86% |
+| xgboost        |   53.79% |
+
+How did each model fare for each genre?
+
+``` r
+compare_dt %>%
+  rbind(compare_rf) %>%
+  rbind(compare_gb) %>%
+  count(true_value, predicted_value, model) %>%
+  mutate(match = ifelse(true_value == predicted_value, TRUE, FALSE)) %>%
+  group_by(true_value, model) %>%
+  mutate(pct = n/sum(n)) %>% 
+  ungroup() %>%
+  mutate(label = ifelse(match == TRUE, paste0(round(pct * 100,1),'%'), "")) %>%
+  ggplot(aes(x = true_value, y = n, fill = predicted_value, label = label)) +
+  geom_col(position = 'dodge') +
+  geom_text(position = position_dodge(width = 1), cex = 2.75, hjust = -0.1) +
+  facet_wrap( ~ model, ncol = 3) +
+  coord_flip() + 
+  labs(title = 'Genre Accuracy by Model',
+       subtitle = 'Accuracy denoted as a percent label',
+       y = 'Count classified') +
+  ylim(c(0,1000)) +
+  theme_kp() +
+  theme(panel.grid.major.y = element_blank()) +
+  scale_fill_kp() 
+```
+
+![](spotify_genres_files/figure-gfm/compare_plot-1.png)<!-- -->
+
+All genres showed gains in accuracy as we moved from simpler to more
+complex (decision tree –\> XGBoost). `Pop`, `latin`, and `R&B` remained
+the most difficult to classify, while `EDM`, `rap` and `rock` reached
+more than 65% accuracy.
+
+### Bonus: Principal component analysis of features
+
+While it is typically used to reduce dimensionality and prep a dataset
+for training, [Principal Component Analysis
+(PCA)](https://uc-r.github.io/pca) can also provide insight into the
+relationship between features and classes. It reduces the number of
+variables in a dataset by finding combinations of those variables,
+called principal components, that explain the majority of the
+variability in the dataset.
+
+First, we’ll find the covariance between the features, and then their
+eigenvalues and eigenvectors. The eigenvalues tell us what percentage of
+the variability the principal component (PC) explains, and the
+eigenvector describes how the PC summarises the features. We don’t need
+to use all the PCs (n-1, so 11 in this case), but generally can simplify
+by choosing the number of PCs that together explain the majority of the
+variance (75-90%).
+
+``` r
+song_cov <- cov(playlist_songs_scaled[,feature_names_reduced])
+song_eigen <- eigen(song_cov)
+
+data.frame(proporation_of_variance = song_eigen$values/sum(song_eigen$values)) %>%
+  mutate(cumulative_prop = cumsum(proporation_of_variance),
+         pc = 1:n()) %>%
+  ggplot(aes(x = pc, y = cumulative_prop)) + 
+  geom_point() + 
+  geom_line() +
+  ylim(c(0,1)) +
+  labs(title = 'Cumulative Scree Plot', 
+       x = 'Principal Component', y = 'Cumulative % of variance explained') +
+  theme_kp() 
+```
+
+![](spotify_genres_files/figure-gfm/pca-1.png)<!-- -->
+
+We would need to retain 7 PCs to explain \>75% of the variance, which is
+a great improvement from 12 features, but doesn’t help much with
+understanding the relationship between the features and song genres.
+
+Let’s look a litle closer at the first two for simplicity’s sake.
+
+``` r
+song_eigenvectors <- song_eigen$vectors[,1:2] * -1
+song_eigenvectors <- song_eigenvectors %>%
+  as.data.frame() %>%
+  mutate(feature = row.names(song_cov)) %>%
+  rename('PC1' = 'V1',
+         'PC2' = 'V2')
+
+song_eigenvectors %>%
+  pivot_longer(cols = c('PC1', 'PC2')) %>%
+  ggplot(aes(x = feature, y = value)) + 
+  geom_col(aes(fill = feature), position = 'dodge') +
+  facet_wrap(~name, ncol = 2) +
+  coord_flip() +
+  labs(title = 'Principal Component Loadings', 
+       x = 'loading', y = '') +
+  theme_kp() + 
+  scale_fill_kp() 
+```
+
+![](spotify_genres_files/figure-gfm/pca_2-1.png)<!-- -->
+
+The first PC is characterized by high acoustincess and low tempo and
+energy; the second by low valence and danceability. Songs with similar
+scores will map onto these components.
+
+How does this map onto genres?
+
+``` r
+PC <- data.frame(playlist_genre = playlist_songs_scaled$playlist_genre,
+                 PC1 = as.matrix(playlist_songs_scaled[,feature_names_reduced]) %*% song_eigenvectors[,1], 
+                 PC2 = as.matrix(playlist_songs_scaled[,feature_names_reduced]) %*% song_eigenvectors[,2])
+
+PC %>% 
+  ggplot(aes(x = PC1, y = PC2, color = playlist_genre)) + 
+  geom_point(alpha = 0.25) + 
+  facet_wrap(~playlist_genre) +
+  labs(title =paste('Plotting principal components 1 vs 2')) +
+  theme_kp() + 
+  scale_color_kp(palette = 'mixed') 
+```
+
+![](spotify_genres_files/figure-gfm/pca_3-1.png)<!-- -->
+
+It’s clear once we plot the first two components against each other why
+they don’t explain all of the variability - the distributions of each
+genre look fairly similar to each other (i.e. the PCs are not clearly
+dividing them from each other). Pop and rock tend to push into the upper
+right quadrant, mapping slightly more strongly onto PC1 than the other
+genres, while EDM pushes into the top left quadrant, mapping more
+strongly onto PC2 than other genres, likely due to its
+characteristically low valence.
+
+### Conclusion: What did we learn?
+
+`Rap`: speechy.  
+`Rock`: can’t dance to it.  
+`EDM`: high tempo.  
+`R&B`: long songs.  
+`Latin`: very danceable.  
+`Pop`: everything else.
+
+`Rap` was one of the easier genres to classify, largely thanks to the
+speechiness feature. Low danceability helped separate out `rock` tracks,
+and high `tempo` provided the distinction needed to find `EDM` songs.
+`R&B`, `pop`, and `latin` songs were most difficult to sort out, but
+`R&B` songs tended to be longer in duration, and `latin` songs were
+slightly more danceable than `pop` tracks.
