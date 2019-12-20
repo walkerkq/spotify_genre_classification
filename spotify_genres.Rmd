@@ -400,6 +400,8 @@ accuracy_rf %>%
   knitr::kable()
 ```
 
+Overall, the random forest model performed the best, though all three models have poor accuracy. Classifying fewer genres would likely improve this metric, and trying to classify more than 6 would likely drive it down further. It's unlikely that this approach is a robust way to classify music in real life, where Spotify handles thousands of different genres and subgenres.
+
 How did each model fare for each genre?  
 
 ```{r compare_plot, fig.width = 10}
