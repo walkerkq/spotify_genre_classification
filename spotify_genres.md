@@ -78,6 +78,7 @@ library(rpart)
 library(rpart.plot)
 library(xgboost)
 source('../kp_themes/theme_kp.R')
+theme_set(theme_classic() + theme_kp())
 options(scipen = 999)
 
 knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, 
@@ -143,7 +144,6 @@ playlist_songs %>%
   facet_wrap(~name, ncol = 3, scales = 'free') +
   labs(title = 'Spotify Audio Feature Density - by Genre',
        x = '', y = 'density') +
-  theme_kp() +
   theme(axis.text.y = element_blank()) + 
   scale_color_kp(palette = 'mixed')
 ```
@@ -183,8 +183,7 @@ playlist_songs %>%
   ggplot(aes(y = duration_ms)) +
   geom_boxplot(color = kp_cols('red'), coef = 4) +
   coord_flip() +
-  labs(title = 'Duration') +
-  theme_kp() 
+  labs(title = 'Duration') 
 ```
 
 ![](spotify_genres_files/figure-gfm/outliers-1.png)<!-- -->
@@ -538,7 +537,6 @@ compare_importance %>%
   labs(title = 'Variable Importance by Model',
        subtitle = 'Scaled for comparison',
        y = 'Scaled value', x = '') +
-  theme_kp() + 
   scale_color_kp(palette = 'cool')
 ```
 
@@ -613,7 +611,6 @@ compare_dt %>%
        subtitle = 'Accuracy denoted as a percent label',
        y = 'Count classified') +
   ylim(c(0,1000)) +
-  theme_kp() +
   theme(panel.grid.major.y = element_blank()) +
   scale_fill_kp() 
 ```
@@ -655,8 +652,7 @@ data.frame(proporation_of_variance = song_eigen$values/sum(song_eigen$values)) %
   geom_line() +
   ylim(c(0,1)) +
   labs(title = 'Cumulative Scree Plot', 
-       x = 'Principal Component', y = 'Cumulative % of variance explained') +
-  theme_kp() 
+       x = 'Principal Component', y = 'Cumulative % of variance explained') 
 ```
 
 ![](spotify_genres_files/figure-gfm/pca-1.png)<!-- -->
@@ -683,7 +679,6 @@ song_eigenvectors %>%
   coord_flip() +
   labs(title = 'Principal Component Loadings', 
        x = 'loading', y = '') +
-  theme_kp() + 
   scale_fill_kp() 
 ```
 
@@ -705,7 +700,6 @@ PC %>%
   geom_point(alpha = 0.25) + 
   facet_wrap(~playlist_genre) +
   labs(title = 'Plotting principal components 1 vs 2') +
-  theme_kp() + 
   scale_color_kp(palette = 'mixed') 
 ```
 
