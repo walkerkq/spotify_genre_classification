@@ -1,6 +1,12 @@
 Spotify Audio Features + Music Genres
 ================
 
+Musical genre is far from black and white - there are no hard and fast
+rules for classifying a given track or artist as “hard rock” vs. “folk
+rock,” but rather the listener knows it when they hear it. Is it
+possible to classify songs into broad genres? And what can quantitative
+audio features tell us about the qualities of each genre?
+
 ## Exploring Spotify’s audio features
 
 The [Spotify Web
@@ -20,21 +26,23 @@ It’s likely that Spotify uses these features to power products like
 Spotify Radio and custom playlists like Discover Weekly and Daily Mixes.
 Those products also make use of Spotify’s vast listener data, like
 listening history and playlist curation, for you and users similar to
-you.
-
-Musical genre is far from black and white - there are no hard and fast
-rules for classifying a given track or artist as “hard rock” vs. “folk
-rock,” but rather the listener knows it when they hear it. Spotify has
-the benefit of letting humans create relationships between songs and
-weigh in on genre via listening and creating playlists. With just the
-quantitative features, is it possible to classify songs into broad
-genres? And what can these audio features tell us about the qualities of
-each genre?
+you. Spotify has the benefit of letting humans create relationships
+between songs and weigh in on genre via listening and creating
+playlists. With just the quantitative features, is it possible to
+classify songs into broad genres? And what can these audio features tell
+us about the qualities of each genre?
 
 We’ll look into a sample of songs from six broad genres - `pop`, `rap`,
 `rock`, `latin`, `EDM`, and `R&B` - to find out.
 
 ### TL;DR:
+
+Decision tree, random forest, and XGBoost models were trained on the
+audio feature data for 33,000+ songs. The random forest model was able
+to classify ~54% of songs into the correct genre, a marked improvement
+from random chance (1 in 6 or ~17%), while the individual decision tree
+shed light on which audio features were most relevant for classifying
+each genre:
 
 `Rap`: speechy.  
 `Rock`: can’t dance to it.  
@@ -42,6 +50,13 @@ We’ll look into a sample of songs from six broad genres - `pop`, `rap`,
 `R&B`: long songs.  
 `Latin`: very danceable.  
 `Pop`: everything else.
+
+`Rap` was one of the easier genres to classify, largely thanks to the
+speechiness feature. Low danceability helped separate out `rock` tracks,
+and high `tempo` provided the distinction needed to find `EDM` songs.
+`R&B`, `pop`, and `latin` songs were most difficult to sort out, but
+`R&B` songs tended to be longer in duration, and `latin` songs were
+slightly more danceable than `pop` tracks.
 
 ### Table of Contents
 
@@ -179,25 +194,32 @@ interquartile range by 4 to widen the spread of values we’ll consider
 *not* be outliers.
 
 ``` r
-playlist_songs %>%
+with_outliers <- playlist_songs %>%
   ggplot(aes(y = duration_ms)) +
   geom_boxplot(color = kp_cols('red'), coef = 4) +
   coord_flip() +
   labs(title = 'Duration') 
-```
 
-![](spotify_genres_files/figure-gfm/outliers-1.png)<!-- -->
-
-``` r
 duration_outliers <- boxplot(playlist_songs$duration_ms, 
                              plot = FALSE, range = 4)$out
 
 playlist_songs_no_outliers <- playlist_songs %>%
   filter(!duration_ms %in% duration_outliers) 
+
+without_outliers <- playlist_songs_no_outliers %>%
+  ggplot(aes(y = duration_ms)) +
+  geom_boxplot(color = kp_cols('red'), coef = 4) +
+  coord_flip() +
+  labs(title = 'Duration, outliers removed') 
+
+gridExtra::grid.arrange(with_outliers, without_outliers, ncol = 1)
 ```
 
+![](spotify_genres_files/figure-gfm/outliers-1.png)<!-- -->
+
 There were 116 songs that were defined as outliers and removed from the
-dataset.
+dataset, resulting in a distribution maxing out at 516,000 ms (8.6
+minutes) instead of 5,100,000 ms (85 minutes).
 
 #### Correlation between features
 
@@ -245,59 +267,34 @@ feature_names_reduced <- names(playlist_songs)[c(12:14,16:23)]
 
 #### Correlation within genres
 
-How do the genres correlate with each other? How consistent are songs
-within a given genre?
-
-We’ll take a sample of the dataset and calculate the correlation between
-all the songs, then aggregate those measures by genre to produce a
-feature that’s basically the average correlation between songs in two
-given genres.
+How do the genres correlate with each other? We’ll calculate the median
+feature values for each genre and then compute the correlation between
+those to find out. This doesn’t take individual song variation into
+account, but will give us an idea which genres are similar to each
+other.
 
 ``` r
-# take a random sample
-set.seed(0012)
-song_sample <- sample(1:nrow(playlist_songs_no_outliers), nrow(playlist_songs_no_outliers)*.05, replace = FALSE)
-
-# create a key dataframe with ids/genres with numerical index
-key <- playlist_songs_no_outliers %>%
-  select(track.id, playlist_genre) %>%
-  mutate(position = as.character(1:n()))
-
-key <- key[song_sample, ]
-
-# create a correlation matrix, then melt it
-song_cor <- playlist_songs_no_outliers[song_sample, ] %>% 
-  select(feature_names_reduced) %>%
-  scale() %>%
-  t() %>%
-  cor() %>%
-  as.data.frame() %>%
-  mutate(index = row.names(.)) %>%
-  pivot_longer(-index) %>%
-  filter(!is.na(value) & index != name) %>%
-  left_join(key, by = c('index' = 'position')) %>%
-  left_join(key, by = c('name' = 'position')) 
-
-# summarise by genres
-genre_cor <- song_cor %>%
-  group_by(playlist_genre.x, playlist_genre.y) %>%
-  summarise(avg_cor = mean(value)) %>%
+# average features by genre
+avg_genre_matrix <- playlist_songs_no_outliers %>%
+  group_by(playlist_genre) %>%
+  summarise_if(is.numeric, median, na.rm = TRUE) %>%
   ungroup() 
 
-genre_cor_matrix <- genre_cor %>%
-  pivot_wider(id_cols = 'playlist_genre.x', 
-              names_from = 'playlist_genre.y', 
-              values_from = 'avg_cor')
-
-row.names(genre_cor_matrix) <- genre_cor_matrix$playlist_genre.x
-
-genre_cor_matrix %>%
-  select(-playlist_genre.x) %>%
+avg_genre_cor <- avg_genre_matrix %>%
+  select(feature_names_reduced, -mode) %>% 
+  scale() %>%
+  t() %>%
   as.matrix() %>%
-  corrplot::corrplot(method = 'color', 
+  cor() 
+
+colnames(avg_genre_cor) <- avg_genre_matrix$playlist_genre
+row.names(avg_genre_cor) <- avg_genre_matrix$playlist_genre
+
+avg_genre_cor %>% corrplot::corrplot(method = 'color', 
                      order = 'hclust',
                      type = 'upper',
                      tl.col = 'black',
+                     diag = FALSE,
                      addCoef.col = "grey40",
                      number.cex = 0.75,
                      col = colorRampPalette(colors = c(
@@ -305,21 +302,17 @@ genre_cor_matrix %>%
                        'white', 
                        kp_cols('dark_blue')))(200),
                      mar = c(2,2,2,2),
-                     main = '\nAverage Correlation Between Genre Songs',
-                     family = 'Avenir'
-                     )
+                     main = 'Correlation Between Median Genre Feature Values',
+                     family = 'Avenir')
 ```
 
-![](spotify_genres_files/figure-gfm/genre_cor-1.png)<!-- -->
+![](spotify_genres_files/figure-gfm/genre_cor_feature-1.png)<!-- -->
 
-Songs within each genre vary quite a bit\! Rock songs are the most
-consistent, with a correlation strength of 0.12, while pop songs are the
-least consistent at just 0.02.
-
-Rap and rock (-0.09) and R\&B and EDM (-0.07) have the strongest
-negative correlations of any genre pairs.The rest of the genres don’t
-negatively or positively correlate much with one another, which may make
-them hard to classify.
+`Rock` and `EDM` is negatively correlated with all genres except for
+each other, which may make them easy to tell apart from the rest of the
+genres, but not each other. `Latin` and `R&B` are the most similar, with
+a positive correlation of 0.57, while `EDM` and `R&B` and `EDM` and
+`latin` are the most different (-0.83, -0.69).
 
 ## Classifying songs into genres using audio features
 
@@ -373,6 +366,7 @@ the flip side, they are prone to overfitting and may produce high
 variance between models created from different samples of the same data.
 
 ``` r
+set.seed(1111)
 model_dt <- rpart(playlist_genre ~ ., data = train_set)
 
 rpart.plot(model_dt, 
@@ -405,17 +399,16 @@ grouped into the `latin` genre, and everything else is considered `pop.`
 
 The values under the leaves represent the distribution of true values
 for each class grouped into that leaf; for example, in the `rap`
-predicted class, 12% were `EDM`, 15% were `latin`, 8% were `pop`, 20%
-were `R&B`, 41% matched the true value, `rap`, and 3% were `rock`
+predicted class, 12% were `EDM`, 16% were `latin`, 8% were `pop`, 20%
+were `R&B`, 40% matched the true value, `rap`, and 3% were `rock`
 tracks. The value beneath that indicates the percentage of observations
-classified into that leaf, so 24% of all tracks were classified as `rap`
+classified into that leaf, so 25% of all tracks were classified as `rap`
 in this tree.
 
-The decision tree classifier was best at classifying `rap` (41% correct)
-and `rock` (43% correct) and had the most trouble getting it right for
-`pop` tracks (30% correct) in the training data. How does it perform on
-the hold-out test data? The plot below shows the predicted value versus
-the true value for each class.
+The decision tree classifier was best at classifying `rock` (43%
+correct) and `rap` (40% correct) and had the most trouble getting it
+right for `pop` tracks (30% correct) in the training data. How does it
+perform on the hold-out test data?
 
 ``` r
 predict_dt <- predict(object = model_dt, newdata = test_set)
@@ -438,7 +431,8 @@ model_accuracy_calc <- function(df, model_name) {
 accuracy_dt <- model_accuracy_calc(df = compare_dt, model_name = 'decision_tree')
 ```
 
-The decision tree model shows an overall accuracy of 37.9%.
+The decision tree model shows an overall accuracy, or percentage of
+songs classified into their correct genre, of 37.9%.
 
 #### Random forest
 
@@ -466,7 +460,7 @@ compare_rf <- data.frame(true_value = test_resp,
 accuracy_rf <- model_accuracy_calc(df = compare_rf, model_name = 'random_forest')
 ```
 
-The random forest model shows an overall accuracy of 54.4%.
+The random forest model shows an overall accuracy of 54.3%.
 
 #### Gradient boosting with XGBoost
 
@@ -488,7 +482,7 @@ matrix_train_gb <- xgb.DMatrix(data = as.matrix(train_set[,-1]), label = as.inte
 matrix_test_gb <- xgb.DMatrix(data = as.matrix(test_set[,-1]), label = as.integer(as.factor(test_set[,1])))
 
 model_gb <- xgboost(data = matrix_train_gb, 
-                    nrounds = 50,
+                    nrounds = 100,
                     verbose = FALSE,
                     params = list(objective = "multi:softmax",
                                   num_class = 6 + 1))
@@ -504,7 +498,7 @@ compare_gb <- data.frame(true_value = test_resp,
 accuracy_gb <- model_accuracy_calc(df = compare_gb, model_name = 'xgboost')
 ```
 
-The gradient boosting model shows an overall accuracy of 53.8%.
+The gradient boosting model shows an overall accuracy of 53.6%.
 
 ### Model comparison
 
@@ -560,6 +554,9 @@ key didn’t contribute much.
 
 #### Accuracy
 
+Accuracy, or percentage of songs classified into their correct genre,
+ranged from 36% to 54% by model.
+
 ``` r
 accuracy_rf %>%
   rbind(accuracy_dt) %>%
@@ -572,16 +569,20 @@ accuracy_rf %>%
 
 | model          | accuracy |
 | :------------- | -------: |
-| random\_forest |   54.39% |
+| random\_forest |   54.32% |
 | decision\_tree |   37.86% |
-| xgboost        |   53.79% |
+| xgboost        |   53.56% |
 
-Overall, the random forest model performed the best, though all three
-models have poor accuracy. Classifying fewer genres would likely improve
-this metric, and trying to classify more than 6 would likely drive it
-down further. It’s unlikely that this approach is a robust way to
-classify music in real life, where Spotify handles thousands of
-different genres and subgenres.
+If we guessed randomly which genre to assign to each song in this
+dataset, the accuracy would be 16.6% (or 1 in 6). The decision tree
+improved on random chance twofold, and random forest and XGBoost
+improved it more than threefold, though none would be very reliable in
+practice.
+
+Classifying fewer genres would likely improve this metric, and trying to
+classify more than 6 would likely drive it down further. It’s unlikely
+that this approach is a robust way to classify music in real life, where
+Spotify handles thousands of different genres and subgenres.
 
 How did each model fare for each genre?
 
@@ -598,7 +599,7 @@ compare_dt %>%
                         paste0(round(pct * 100,1),'%'), 
                         "")) %>%
   ggplot(aes(x = true_value, 
-             y = n, 
+             y = pct, 
              fill = predicted_value, 
              label = label)) +
   geom_col(position = 'dodge') +
@@ -609,8 +610,8 @@ compare_dt %>%
   coord_flip() + 
   labs(title = 'Genre Accuracy by Model',
        subtitle = 'Accuracy denoted as a percent label',
-       y = 'Count classified') +
-  ylim(c(0,1000)) +
+       y = 'Percent classified') +
+  ylim(c(0,.85)) +
   theme(panel.grid.major.y = element_blank()) +
   scale_fill_kp() 
 ```
@@ -618,9 +619,10 @@ compare_dt %>%
 ![](spotify_genres_files/figure-gfm/compare_plot-1.png)<!-- -->
 
 All genres showed gains in accuracy as we moved from simpler to more
-complex (decision tree –\> random forest –\> XGBoost). `Pop`, `latin`,
-and `R&B` remained the most difficult to classify, while `EDM`, `rap`
-and `rock` reached more than 65% accuracy.
+complex (decision tree –\> random forest/XGBoost), though XGBoost didn’t
+provide improvements for most genres. `Pop`, `latin`, and `R&B` remained
+the most difficult to classify, while `EDM`, `rap` and `rock` reached
+more than 65% accuracy.
 
 ### Bonus: Principal component analysis of features
 
@@ -657,9 +659,11 @@ data.frame(proporation_of_variance = song_eigen$values/sum(song_eigen$values)) %
 
 ![](spotify_genres_files/figure-gfm/pca-1.png)<!-- -->
 
-We would need to retain 7 PCs to explain \>75% of the variance, which is
-a great improvement from 12 features, but doesn’t help much with
-understanding the relationship between the features and song genres.
+Typically we would look for an “elbow” where the variance explained by
+subsequent PCs drops off, but there isn’t one here. We would need to
+retain 7 PCs to explain \>75% of the variance, which is a great
+improvement from 12 features, but doesn’t help much with understanding
+the relationship between the features and song genres.
 
 Let’s look a little closer at the first two for simplicity’s sake.
 
@@ -715,6 +719,13 @@ more strongly onto PC2 than other genres, likely due to its
 characteristically low valence.
 
 ### Conclusion: What did we learn?
+
+Decision tree, random forest, and XGBoost models were trained on the
+audio feature data for 33,000+ songs. The random forest model was able
+to classify ~54% of songs into the correct genre, a marked improvement
+from random chance (1 in 6 or ~17%), while the individual decision tree
+shed light on which audio features were most relevant for classifying
+each genre:
 
 `Rap`: speechy.  
 `Rock`: can’t dance to it.  
